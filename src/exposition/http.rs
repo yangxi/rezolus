@@ -2,6 +2,8 @@ use crate::PERCENTILES;
 use metriken::{Counter, Gauge, Heatmap};
 
 use warp::Filter;
+use crate::exposition::DUMP_TRACE_FLAG;
+
 
 /// HTTP exposition
 pub async fn http() {
@@ -15,7 +17,7 @@ mod filters {
 
     /// The combined set of http endpoint filters
     pub fn http() -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-        prometheus_stats().or(human_stats()).or(hardware_info())
+        prometheus_stats().or(human_stats()).or(hardware_info().or(ebpf_trace()))
     }
 
     /// GET /metrics
@@ -41,9 +43,19 @@ mod filters {
             .and(warp::get())
             .and_then(handlers::hwinfo)
     }
+
+    /// GET /ebpf_trace
+    pub fn ebpf_trace(        
+    ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+        warp::path!("ebpf_trace")
+            .and(warp::get())
+            .and_then(handlers::ebpf_trace)
+    }
 }
 
 mod handlers {
+    use crate::SAMPLERS;
+
     use super::*;
     use core::convert::Infallible;
 
@@ -155,11 +167,19 @@ mod handlers {
         Ok(content)
     }
 
-    pub async fn hwinfo() -> Result<impl warp::Reply, Infallible> {
+    pub async fn hwinfo() -> Result<impl warp::Reply, Infallible> {        
         if let Ok(hwinfo) = crate::samplers::hwinfo::hardware_info() {
             Ok(warp::reply::json(hwinfo))
         } else {
             Ok(warp::reply::json(&false))
         }
+    }
+
+    pub async fn ebpf_trace() -> Result<impl warp::Reply, Infallible> {        
+        println!("Set DUMP_TRACE_FLAG to true");
+        unsafe {
+            DUMP_TRACE_FLAG = true;
+        }
+        return Ok(warp::reply::json(&true));
     }
 }

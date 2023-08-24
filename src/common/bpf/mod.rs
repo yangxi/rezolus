@@ -5,9 +5,11 @@ use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 pub use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 
 mod counters;
+mod traces;
 mod distribution;
 
 use counters::Counters;
+use traces::Trace;
 use distribution::Distribution;
 
 const PAGE_SIZE: usize = 4096;
@@ -54,6 +56,9 @@ pub struct Bpf<T: 'static> {
     counters: Vec<Counters<'this>>,
     #[borrows(skel)]
     #[covariant]
+    traces: Vec<Trace<'this>>,   
+    #[borrows(skel)]
+    #[covariant]
     distributions: Vec<Distribution<'this>>,
 }
 
@@ -66,6 +71,7 @@ impl<T: 'static + GetMap> Bpf<T> {
         BpfBuilder {
             skel,
             counters_builder: |_| Vec::new(),
+            traces_builder:|_| Vec::new(),
             distributions_builder: |_| Vec::new(),
         }
         .build()
@@ -80,6 +86,13 @@ impl<T: 'static + GetMap> Bpf<T> {
             this.counters
                 .push(Counters::new(this.skel.map(name), counters));
         })
+    }
+
+    pub fn add_trace(&mut self, index_name:&str, trace_name: &str) {
+        self.with_mut(|this| {
+            this.traces
+                .push(Trace::new(this.skel.map(index_name), this.skel.map(trace_name)));
+        })   
     }
 
     pub fn add_distribution(&mut self, name: &str, heatmap: &'static Heatmap) {
@@ -101,6 +114,14 @@ impl<T: 'static + GetMap> Bpf<T> {
         self.with_mut(|this| {
             for distribution in this.distributions.iter_mut() {
                 distribution.refresh(now);
+            }
+        })
+    }
+
+    pub fn dump_traces(&mut self) {
+        self.with_mut(|this| {
+            for trace in this.traces.iter_mut() {
+                trace.report();
             }
         })
     }

@@ -25,6 +25,11 @@
 #define TCP_RX_SEGMENTS 2
 #define TCP_TX_SEGMENTS 3
 
+#define MAX_TRACEABLE_CPU 32
+#define TCP_TRACE_INDEX_BYTES 0
+#define TCP_TRACE_SIZE (0x100000)
+#define TCP_TRACE_INDEX_MASK (0xfffff)
+
 // counters
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -50,11 +55,45 @@ struct {
 	__uint(max_entries, 7424);
 } tx_size SEC(".maps");
 
+// tcp_trace_index, one 4K page, max 64 CPUs with 64 bytes per CPU pointing to the tail of the ring buffer
+// 8 * cpuid + TCP_TRACE_INDEX_BYTES is the head of the ring buffer
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(map_flags, BPF_F_MMAPABLE);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, 512); 
+} tcp_trace_index SEC(".maps");
+
+// 256 MB size buffer: 32 CPUs, each CPU has 1M 8-byte elements
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(map_flags, BPF_F_MMAPABLE);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, 33554432);
+} tcp_trace SEC(".maps");
+
 static int probe_ip(bool receiving, struct sock *sk, size_t size)
 {
 	u16 family;
 	u64 *cnt;
 	u32 idx;
+  u32 sk_portpair;
+  u64 sk_addrpair;
+  //u32 sk_hash;
+  u32 cpuid;
+  u64 now;
+  u32 trace_idx;
+  u32 timestamp_idx;
+  u32 event_head_idx;
+  u32 event_payload_idx;
+  u64 *trace_offset;
+  u64 *timestamp;
+  // [bit 63]: 1 receiving, 0 sending
+  // [bit 62 - 32]: low 31 bits of the nanosecond timestamp
+  // [bit 31 - 0]: sk_hash
+  u64 event;
 
 	family = BPF_CORE_READ(sk, __sk_common.skc_family);
 
@@ -62,6 +101,35 @@ static int probe_ip(bool receiving, struct sock *sk, size_t size)
 	if (family != AF_INET && family != AF_INET6) {
 		return 0;
 	}
+
+  //sk_hash = BPF_CORE_READ(sk, __sk_common.skc_hash);
+  sk_portpair = BPF_CORE_READ(sk, __sk_common.skc_portpair);
+  sk_addrpair = BPF_CORE_READ(sk, __sk_common.skc_addrpair);
+  cpuid = bpf_get_smp_processor_id();
+  if (cpuid < MAX_TRACEABLE_CPU) {
+    now = bpf_ktime_get_ns();
+    trace_idx = 8 * bpf_get_smp_processor_id() + TCP_TRACE_INDEX_BYTES;  
+    timestamp_idx = trace_idx + 1; 
+    trace_offset = bpf_map_lookup_elem(&tcp_trace_index, &trace_idx); 
+    timestamp = bpf_map_lookup_elem(&tcp_trace_index, &timestamp_idx);
+    if ((trace_offset != NULL) && (timestamp != NULL)) {
+      if (receiving)
+        event = ((now | 0x80000000) << 32) | sk_portpair;
+      else
+        event = ((now & 0x7fffffff) << 32) | sk_portpair;    
+      event_head_idx = cpuid * TCP_TRACE_SIZE + ((*trace_offset) & TCP_TRACE_INDEX_MASK);
+      event_payload_idx = event_head_idx + 1;
+      
+      if (bpf_map_update_elem(&tcp_trace, &event_head_idx, &event, BPF_ANY) == 0) {
+        *trace_offset += 1;
+      }
+      if (bpf_map_update_elem(&tcp_trace, &event_payload_idx, &sk_addrpair, BPF_ANY) == 0) {
+        *trace_offset += 1;
+      }
+      //*trace_offset += 2;
+      *timestamp = now;
+    }
+  }
 
 
 	if (receiving) {

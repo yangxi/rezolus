@@ -188,6 +188,11 @@ macro_rules! sampler {
                     sampler.sample()
                 }
             }
+            fn dump_traces(&mut self) {
+                for sampler in &mut self.samplers {
+                    sampler.dump_traces();
+                }
+            }
         }
     };
 }

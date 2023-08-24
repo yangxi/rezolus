@@ -67,6 +67,7 @@ impl Traffic {
         ];
 
         bpf.add_counters("counters", counters);
+        bpf.add_trace("tcp_trace_index", "tcp_trace");
 
         let mut distributions = vec![("rx_size", &TCP_RX_SIZE), ("tx_size", &TCP_TX_SIZE)];
 
@@ -128,6 +129,9 @@ impl Traffic {
         // mark when we last sampled
         self.distribution_prev = now;
     }
+    pub fn dump_traces(&mut self) {
+        self.bpf.dump_traces();
+    }
 }
 
 impl Sampler for Traffic {
@@ -135,5 +139,9 @@ impl Sampler for Traffic {
         let now = Instant::now();
         self.refresh_counters(now);
         self.refresh_distributions(now);
+    }
+    fn dump_traces(&mut self) {
+        println!("Dump Trace for the traffic module");
+        self.dump_traces();
     }
 }

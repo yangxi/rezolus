@@ -12,6 +12,7 @@ mod config;
 mod exposition;
 mod samplers;
 
+use exposition::DUMP_TRACE_FLAG;
 use config::Config;
 
 pub static PERCENTILES: &[(&str, f64)] = &[
@@ -155,6 +156,14 @@ fn main() {
         // calculate how long to sleep and sleep before next iteration
         // this wakeup period allows a maximum of 1kHz sampling
         let sleep = 1_000_000_u64.saturating_sub(elapsed);
+        if unsafe{ DUMP_TRACE_FLAG } {
+            for sampler in &mut samplers {
+                sampler.dump_traces();
+            }
+            unsafe {
+                DUMP_TRACE_FLAG = false;
+            }
+        }
         std::thread::sleep(std::time::Duration::from_nanos(sleep));
     }
 }
@@ -165,6 +174,7 @@ pub trait Sampler {
 
     /// Do some sampling and updating of stats
     fn sample(&mut self);
-
+    fn dump_traces(&mut self) {        
+    }
     // fn name(&self) -> &str;
 }
